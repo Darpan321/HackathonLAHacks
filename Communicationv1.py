@@ -2,25 +2,27 @@ import google.generativeai as genai
 import speech_recognition as sr
 import pyttsx3
 import re
+import threading
+import time
 
-# Replace with your actual Gemini API key
-GEMINI_API_KEY = 'AIzaSyBG1XC2HZoLnyE0OuN0CEuVhqCi9e32GbY'
+# Replace with your Gemini API key
+GEMINI_API_KEY = ''
 
-# Configure the Gemini API
+# Configure Gemini API
 genai.configure(api_key=GEMINI_API_KEY)
-
-# Load the Gemini Pro model
 model = genai.GenerativeModel('gemini-2.0-flash')
 
-# Initialize the speech engine
+# Initialize TTS
 engine = pyttsx3.init()
+speaking = False
+stop_requested = False
+speak_lock = threading.Lock()
 
-# Function to sanitize output text
+# Sanitize text
 def sanitize_text(text):
-    # Remove unwanted symbols like * or other non-alphabetical unless needed
     return re.sub(r'[^\w\s,.!?]', '', text)
 
-# Function to generate Gemini response
+# Generate Gemini Response
 def generate_response(prompt):
     try:
         response = model.generate_content(prompt)
@@ -29,64 +31,113 @@ def generate_response(prompt):
         print(f"An error occurred: {e}")
         return None
 
-# Function to listen to user's voice
-def listen(prompt_message="How does it sound?"):
+# Passive listening (for wake word)
+def passive_listen():
     r = sr.Recognizer()
     with sr.Microphone() as source:
-        print(prompt_message)
-        audio = r.listen(source)
-    try:
-        text = r.recognize_google(audio)
-        print(f"You said: {text}")
-        return text
-    except sr.UnknownValueError:
-        print("Sorry, I could not understand your voice.")
-        return None
-    except sr.RequestError as e:
-        print(f"Speech recognition error: {e}")
-        return None
+        r.adjust_for_ambient_noise(source)
+        try:
+            print("[Passive Mode] Waiting for Wake Word...")
+            audio = r.listen(source, timeout=5, phrase_time_limit=3)
+            text = r.recognize_google(audio)
+            return text.lower()
+        except (sr.UnknownValueError, sr.WaitTimeoutError, sr.RequestError):
+            return None
 
-# Function to speak the text
+# Active listening (for questions/commands)
+def active_listen():
+    r = sr.Recognizer()
+    with sr.Microphone() as source:
+        r.adjust_for_ambient_noise(source)
+        try:
+            print("[Active Mode] Listening for your command...")
+            audio = r.listen(source)
+            text = r.recognize_google(audio)
+            return text.lower()
+        except (sr.UnknownValueError, sr.RequestError):
+            return None
+
+# Speak text safely (blocking) with stop monitoring
 def speak(text):
-    engine.say(text)
-    engine.runAndWait()
+    global speaking, stop_requested
+    with speak_lock:
+        speaking = True
+        stop_requested = False
+
+        # Split the text into sentences
+        sentences = text.split('. ')
+        for sentence in sentences:
+            if stop_requested:
+                print("[Speech interrupted]")
+                break
+            engine.say(sentence)
+            engine.runAndWait()
+
+        speaking = False
+
+# Thread to monitor "stop" while speaking
+def monitor_stop():
+    global speaking, stop_requested
+    r = sr.Recognizer()
+    with sr.Microphone() as source:
+        r.adjust_for_ambient_noise(source)
+        try:
+            while speaking and not stop_requested:
+                print("[Monitoring for Stop Command]")
+                audio = r.listen(source, timeout=3, phrase_time_limit=2)
+                try:
+                    text = r.recognize_google(audio).lower()
+                    if "stop" in text:
+                        print("[Stop command detected!]")
+                        stop_requested = True
+                        with speak_lock:
+                            engine.stop()
+                        return
+                except (sr.UnknownValueError, sr.RequestError):
+                    continue
+        except sr.WaitTimeoutError:
+            return
 
 if __name__ == "__main__":
-    wake_words = ["i want to talk", "hey assistant", "hello assistant"]
-    exit_keywords = ["bye", "quit", "close", "exit"]
+    wake_words = ["i want to talk", "hey assistant", "hello assistant", "hi"]
+    exit_words = ["bye", "quit", "close", "exit"]
 
-    print("Voice Assistant is running quietly... Say 'I want to talk' to begin!")
+    print("🔵 Voice Assistant running silently. Say 'I want to talk' to wake me.")
 
     while True:
-        user_input = listen()
+        wake_text = passive_listen()
 
-        if user_input is None:
-            continue
+        if wake_text and any(word in wake_text for word in wake_words):
+            print("👂 I am here. What's up?")
+            speak("I am here. What's up?")
 
-        lower_input = user_input.lower()
-
-        if any(word in lower_input for word in wake_words):
-            speak("I am here, what's up?")
             while True:
-                user_input = listen()
+                user_text = active_listen()
 
-                if user_input is None:
+                if user_text is None:
                     continue
 
-                should_exit = False
-                for keyword in exit_keywords:
-                    if keyword in user_input.lower():
-                        should_exit=True
-                        break
+                if any(exit_word in user_text for exit_word in exit_words):
+                    speak("Goodbye!")
+                    break
 
+                response = generate_response(user_text)
 
-                output = generate_response(user_input)
-
-                if output:
+                if response:
                     print("Gemini's response:")
-                    print(output)
-                    speak(output)
-                    if should_exit:
-                        break
+                    print(response)
 
-            print("Listening quietly again... Say 'I want to talk' to wake me.")
+                    # Start monitoring stop during speech
+                    stop_thread = threading.Thread(target=monitor_stop)
+                    stop_thread.start()
+
+                    # Speak response
+                    speak(response)
+
+                    # Wait for stop_thread to finish cleanly
+                    stop_thread.join()
+
+                    if stop_requested:
+                        speak("Okay, I won't continue reading.")
+
+        # Back to passive listening
