@@ -27,9 +27,19 @@ def generate_response(prompt):
     return None
 
 if __name__ == "__main__":
-  user_input = input("Enter your prompt: ")
-  output = generate_response(user_input)
 
-  if output:
-    print("Gemini's response:")
-    print(output)
+  exit_keywords = ["bye", "quit", "close", "exit"]
+  while True:
+    user_input = input("Enter your prompt: ")
+    should_exit = False
+    for keyword in exit_keywords:
+      if keyword in user_input.lower():
+        should_exit=True
+        break
+    output = generate_response(user_input)
+
+    if output:
+      print("Gemini's response:")
+      print(output)
+      if should_exit:
+        break
