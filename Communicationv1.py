@@ -5,8 +5,6 @@ import re
 import threading
 import time
 
-# Replace with your Gemini API key
-GEMINI_API_KEY = ''
 
 # Configure Gemini API
 genai.configure(api_key=GEMINI_API_KEY)
