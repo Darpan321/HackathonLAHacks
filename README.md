@@ -37,10 +37,10 @@ Developed during **#LAHacks2025** using **#Google's Gemini 2.0 API**, **Speech R
 
 ```bash
 # Clone the repository
-git clone https://github.com/Darpan321/HackathonLAHacks.git
+git clone https://github.com/Darpan321/Novora.git
 
 # Navigate into the project folder
-cd HackathonLAHacks
+cd Novora
 
 # Install dependencies
 pip install -r requirements.txt
